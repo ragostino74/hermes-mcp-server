@@ -31,7 +31,7 @@ export LLM_ENDPOINT="http://localhost:10000/v1"
 export LLM_MODEL="Qwen3.6-35B-A3B-Q8_0.gguf"
 
 # Opzionale: configura SearXNG (se non impostato, usa DuckDuckGo)
-export SEARXNG_URL="http://127.0.0.1:8888"
+export SEARXNG_URL="http://localhost:8888"
 
 # Avvia in modalità stdio (per Claude Desktop, VS Code, ecc.)
 python hermes_mcp_server.py
