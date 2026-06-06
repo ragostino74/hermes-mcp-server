@@ -764,7 +764,14 @@ _CORS_RAW = os.environ.get("HERMES_MCP_CORS_ORIGINS", "").strip()
 if _CORS_RAW.lower() == "[]":
     cors_origins_list: list[str] = []  # Disable entirely — same-origin only
 elif _CORS_RAW:
-    cors_origins_list = [o.strip() for o in _CORS_RAW.split(",") if o.strip()]
+    # Try JSON parse first (e.g. '["*", "http://host:port"]'), fallback to comma-split
+    try:
+        import json as _json
+        cors_origins_list = _json.loads(_CORS_RAW)
+        if not isinstance(cors_origins_list, list):
+            cors_origins_list = [_json.loads(f'"{_CORS_RAW}"')]
+    except (json.JSONDecodeError, ValueError):
+        cors_origins_list = [o.strip() for o in _CORS_RAW.split(",") if o.strip()]
 else:
     cors_origins_list = ["http://localhost:*", "https://localhost:*"]  # Default: localhost only
 
@@ -832,10 +839,11 @@ async def main():
                 app=mcp_app,
                 allow_origins=cors_origins_list,  # CORS origins configurable via HERMES_MCP_CORS_ORIGINS
                 allow_methods=["POST", "OPTIONS"],
-                allow_headers=["Content-Type", "Authorization", "Mcp-Session-Id"],
+                allow_headers=["Content-Type", "Authorization", "Accept", "Mcp-Session-Id", "Mcp-Protocol-Version"],
                 # NOTE: allow_credentials=True is intentionally disabled.
                 # Browsers block wildcard subdomains (*) + credentials combination.
                 # MCP-Session-ID is passed via header, not cookie — no auth cookies needed.
+                expose_headers=["Mcp-Session-Id", "Cache-Control", "Content-Disposition"],
             )
 
             import uvicorn

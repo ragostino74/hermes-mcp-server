@@ -53,8 +53,8 @@ python hermes_mcp_server.py
 | `HERMES_MCP_PORT` | `18760` | Porta per la modalità HTTP/StreamableHTTP |
 | `HERMES_MCP_RATE_LIMIT` | `5` | Max chiamate/minuto per token bucket (rate limiting) |
 | `HERMES_MCP_CONCURRENCY` | `3` | Max chiamate HTTP parallele (semaphore cap) |
-| `HERMES_MCP_CORS_ORIGINS` | `http://localhost:*,https://localhost:*` | CORS origins, comma-separated. Imposta a `[]` per same-origin-only |
-|| `HERMES_MCP_BIND_ADDR` | `127.0.0.1` | Bind IP per il server MCP HTTP (default localhost; impostare `0.0.0.0` solo su reti affidabili) |
+| `HERMES_MCP_CORS_ORIGINS` | `http://localhost:*,https://localhost:*` | Origini CORS consentite. Accetta array JSON (es. `'["*"]'`, `'["http://host1:port","http://host2:port"]'`) o lista comma-separated. Imposta a `[]` per same-origin-only. |
+| `HERMES_MCP_BIND_ADDR` | `127.0.0.1` | Bind IP per il server MCP HTTP (default localhost; impostare `0.0.0.0` solo su reti affidabili) |
 
 ## Note sulla Sicurezza
 
