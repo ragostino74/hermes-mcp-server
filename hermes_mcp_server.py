@@ -95,7 +95,7 @@ except ImportError:
 
 TRANSPORT = os.environ.get("HERMES_MCP_TRANSPORT", "stdio")
 LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "http://localhost:10000/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL", "Qwen3.6-35B-A3B-Q8_0.gguf")
+LLM_MODEL = os.environ.get("LLM_MODEL", "Qwen3.6-35B-A3B-UD-Q6_K")
 SEARXNG_URL = os.environ.get("SEARXNG_URL", "").rstrip("/")
 
 # ── Server bind addresses (default 0.0.0.0 for network accessibility) ───
@@ -565,7 +565,7 @@ def _search_searxng(query, max_results=5):
             "language": "it",
         }
         url = f"{SEARXNG_URL}/search?{up.urlencode(params)}"
-        with httpx.Client(timeout=httpx.Timeout(connect=5, read=15), follow_redirects=False) as client:
+        with httpx.Client(timeout=httpx.Timeout(connect=5, read=15, write=10, pool=5), follow_redirects=False) as client:
             resp = client.get(url, headers={"User-Agent": "hermes-mcp-server/2.1.1"})
             data = resp.json()
 
@@ -758,9 +758,12 @@ async def read_webpage(url: str) -> dict:
 # ── CORS origins for MCP HTTP server ────────
 # Configurable via HERMES_MCP_CORS_ORIGINS env var (comma-separated).
 # Default: localhost:* only. Setting to "[]" disables all CORS (same-origin only).
+# Set to "*" for wildcard — accept any browser origin (no cookies, session ID via header).
 _CORS_RAW = os.environ.get("HERMES_MCP_CORS_ORIGINS", "").strip()
 if _CORS_RAW.lower() == "[]":
     cors_origins_list: list[str] = []  # Disable entirely — same-origin only
+elif _CORS_RAW.lower() == "*":
+    cors_origins_list = ["*"]  # Wildcard — any browser origin (no credentials, session ID via header)
 elif _CORS_RAW:
     # Try JSON parse first (e.g. '["*", "http://host:port"]'), fallback to comma-split
     try:
@@ -859,7 +862,15 @@ async def main():
             sig_mod.signal(sig_mod.SIGTERM, _on_signal)
 
             try:
-                await server.serve()
+                if TRANSPORT == "dual":
+                    # Run BOTH stdio (for Hermes CLI/TUI) and HTTP (for browser) concurrently
+                    print("Running in DUAL mode (stdio + HTTP)...", file=sys.stderr)
+                    await asyncio.gather(
+                        server.serve(),
+                        mcp_server.run_stdio_async(),
+                    )
+                else:
+                    await server.serve()
             except SystemExit as e:
                 print(f"\nMCP HTTP server exited (code {e.code})", file=sys.stderr)
 
@@ -868,18 +879,15 @@ async def main():
             print("Shutting down...", file=sys.stderr)
 
         else:
-            print(
-                "\nERROR: FastMCP with HTTP requires 'mcp[serve]' package.",
-                file=sys.stderr,
-            )
-            print("Install with: pip install 'mcp[serve]'", file=sys.stderr)
-
-    elif TRANSPORT == "dual" and not FASTMCP_AVAILABLE:
-        print(
-            "\nDual mode requires mcp[serve]. Falling back to stdio.",
-            file=sys.stderr,
-        )
-        await mcp_server.run_stdio_async()
+            if TRANSPORT == "dual":
+                print("\nDual mode requires mcp[serve]. Falling back to stdio.", file=sys.stderr)
+                await mcp_server.run_stdio_async()
+            else:
+                print(
+                    "\nERROR: FastMCP with HTTP requires 'mcp[serve]' package.",
+                    file=sys.stderr,
+                )
+                print("Install with: pip install 'mcp[serve]'", file=sys.stderr)
 
 
 if __name__ == "__main__":
