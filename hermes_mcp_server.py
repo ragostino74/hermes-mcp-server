@@ -103,7 +103,15 @@ _MCP_BIND_ADDR = os.environ.get("HERMES_MCP_BIND_ADDR", "127.0.0.1")  # MCP HTTP
 
 
 def _is_safe_url(url: str) -> bool:
-    """Block access to localhost, private IPs, link-local, metadata endpoints.
+    """Block access to localhost, link-local, and cloud metadata endpoints.
+
+    By default, all RFC 1918 private IPs are blocked (secure default for
+    servers exposed on public networks). Set MCP_ALLOW_PRIVATE_IPS=1 to allow
+    private-range addresses — useful when the LLM/SearXNG run on a LAN behind
+    this server (e.g., Docker or VM deployments).
+
+    Always blocks: localhost, link-local, cloud metadata (169.254.169.254,
+    168.63.129.16), and IPv6 ULA/link-local/site-local ranges.
 
     Also blocks IDN homograph attacks (e.g., xn--p1ai lookalikes), Unicode
     confusion characters, and punycode-encoded hostnames that could bypass
@@ -111,88 +119,78 @@ def _is_safe_url(url: str) -> bool:
     """
     import socket
 
+    _allow_private = os.environ.get("MCP_ALLOW_PRIVATE_IPS", "0") == "1"
+
     parsed = urlparse(url)
     raw_host = (parsed.hostname or "").lower()
 
     # ── IDN Homograph / Punycode pre-check ──────────────────────────────
-    # If the hostname contains 'xn--', it's a punycode-encoded domain.
-    # These can be used to visually spoof legitimate domains (e.g.,
-    # "amazоn.com" with Cyrillic о vs Latin o, or xn-- domains that
-    # look like English words). Block all punycode hostnames as a
-    # defense-in-depth measure.
     if "xn--" in raw_host:
         return False
 
-    # Check for Unicode confusion / homoglyph characters (non-ASCII chars
-    # that look like ASCII but resolve differently in IDN contexts):
-    #   - Cyrillic о (U+043E) looks like Latin o
-    #   - Greek ω (U+03C9), Arabic waw, etc.
-    # If the hostname contains ANY non-ASCII character after punycode check,
-    # it's potentially a homograph attack.
     for ch in raw_host:
         if ord(ch) > 127:
             return False
 
-    # Block by hostname (ASCII-safe after above checks)
     blocked_hosts = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
     if raw_host in blocked_hosts:
         return False
 
-    # Resolve IP to catch localhost aliases and expand punycode
     try:
         addrinfo = socket.getaddrinfo(raw_host, None)
         for family, socktype, proto, canonname, sockaddr in addrinfo:
             ip = sockaddr[0]
 
-            # ── IPv4 private / loopback ──────────────────────────────
-            if ip == "127.0.0.1":
+            # ── IPv4 loopback — always block ───────────────────────
+            if ip == "127.0.0.1" or ip.startswith("127."):
                 return False
-            if ip.startswith("127."):
-                return False
-            if ip.startswith("10.") or ip.startswith("192.168."):
-                return False
-            if ip.startswith("172."):
-                parts = ip.split(".")
-                if len(parts) == 4 and 16 <= int(parts[1]) <= 31:
-                    return False
+
+            # ── IPv4 link-local — always block ─────────────────────
             if ip.startswith("169.254."):
                 return False
 
-            # ── IPv6 private ranges ─────────────────────────────────
-            lower = ip.lower()
-            # Unique Local Addresses (ULA) fc00::/7  (includes fd00::/8)
-            if lower.startswith("fc") or lower.startswith("fd"):
+            # ── Cloud metadata endpoints — must always be blocked ──
+            if ip in {"169.254.169.254", "168.63.129.16",
+                      "169.254.169.253"}:
                 return False
-            # Loopback ::1
-            if ip == "::1":
-                return False
-            # Link-local fe80::/10
-            if lower.startswith("fe8") or lower.startswith("fe9") or \
-               lower.startswith("fea") or lower.startswith("feb"):
-                return False
-            # Site-local (deprecated) fec0::/10 — still block
-            if lower.startswith("fec"):
-                return False
-            # IPv4-mapped IPv6 ::ffff:x.x.x.x  → unmask and check private
-            if ip.startswith("::ffff:"):
-                mapped = ip.split(":")[-1]  # e.g. "127.0.0.1"
-                if mapped == "127.0.0.1":
+
+            # ── RFC 1918 private ranges (opt-in via env var) ───────
+            if not _allow_private:
+                if ip.startswith("10.") or ip.startswith("192.168."):
                     return False
-                if mapped.startswith("127.") or mapped.startswith("10.") \
-                   or mapped.startswith("192.168."):
-                    return False
-                if mapped.startswith("172."):
-                    parts = mapped.split(".")
+                if ip.startswith("172."):
+                    parts = ip.split(".")
                     if len(parts) == 4 and 16 <= int(parts[1]) <= 31:
                         return False
-                if mapped.startswith("169.254."):
-                    return False
 
-            # Block metadata endpoints (same as before)
-            if ip == "0.0.0.0":
+            # ── IPv6 ULA/link-local — always block ─────────────────
+            lower = ip.lower()
+            if lower.startswith("fc") or lower.startswith("fd"):
                 return False
+            if ip == "::1":
+                return False
+            if (lower.startswith("fe8") or lower.startswith("fe9") or
+                    lower.startswith("fea") or lower.startswith("feb")):
+                return False
+            if lower.startswith("fec"):
+                return False
+
+            # ── IPv4-mapped IPv6 ::ffff:x.x.x.x → unmask and check ─
+            if ip.startswith("::ffff:"):
+                mapped = ip.split(":")[-1]
+                if (mapped == "127.0.0.1" or mapped.startswith("127.") or
+                        mapped.startswith("169.254.")):
+                    return False
+                if not _allow_private:
+                    if (mapped.startswith("10.") or
+                            mapped.startswith("192.168.")):
+                        return False
+                    if mapped.startswith("172."):
+                        parts = mapped.split(".")
+                        if len(parts) == 4 and 16 <= int(parts[1]) <= 31:
+                            return False
+
     except (socket.gaierror, OSError):
-        # If DNS resolution fails, block to be safe
         return False
 
     return True
