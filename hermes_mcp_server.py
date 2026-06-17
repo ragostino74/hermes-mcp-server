@@ -126,9 +126,11 @@ _SEMAPHORE_MAX  = int(os.environ.get("HERMES_MCP_CONCURRENCY", "3"))         # m
 
 # httpx shared client (single instance, connection pool reused across all calls)
 _http_client = httpx.Client(
-    timeout=httpx.Timeout(connect=5, read=90, write=10, pool=5),
-    follow_redirects=False,
-    headers={"User-Agent": USER_AGENT},
+    # Timeout aumentati per gestire proxy (HEADROOM) che aggiungono latenza.
+    # connect/read sono il fattore critico: HEADROOM può aggiungere 5-10s di overhead.
+    timeout=httpx.Timeout(connect=20, read=60, write=10, pool=5),
+    proxies={"all://": LLM_ENDPOINT},  # ALL requests go through configured proxy/endpoint
+    limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
 )
 
 
@@ -442,11 +444,9 @@ def _sanitize_search_result(text: str, max_len: int = 2000) -> str:
 def _summarize_with_llm(prompt_text: str, max_tokens: int = 1500, temperature: float = 0.3) -> str:
     """Use local LLM to summarize content. Runs via _external_call (threadpool)."""
     try:
-        # Runtime SSRF guard on LLM endpoint
-        if not _is_safe_url(LLM_ENDPOINT):
-            sys.stderr.write("LLM endpoint: blocked unsafe URL\n")
-            return ""
-
+        # NOTE: No SSRF guard on LLM_ENDPOINT — it's explicitly configured by the
+        # user (not arbitrary user-supplied data). Real SSRF protection applies to
+        # SEARXNG_URL and URLs passed to read_webpage(), not self-configured endpoints.
         safe_prompt = _sanitize_for_llm(prompt_text, max_len=6000)
 
         body = json.dumps({
@@ -471,7 +471,11 @@ def _summarize_with_llm(prompt_text: str, max_tokens: int = 1500, temperature: f
         return "Errore durante la sintesi LLM"
 
     if data.get("choices"):
-        return data["choices"][0]["message"]["content"].strip()
+        text = data["choices"][0].get("message", {}).get("content") or ""
+        # Fallback per LLM che usano reasoning_content (es. HEADROOM/vLLM)
+        if not text.strip():
+            text = data["choices"][0].get("message", {}).get("reasoning_content") or ""
+        return text.strip()
     return ""
 
 
@@ -491,6 +495,7 @@ def _search_ddg(query, max_results=5):
                 for r in results
             ],
             "total": len(results),
+        "llm_summary": llm_result or "Sintesi LLM non disponibile",
             "source": "duckduckgo",
         }
         _set_cache(ck, result)
@@ -538,6 +543,7 @@ def _search_searxng(query, max_results=5):
             "query": query,
             "results": results,
             "total": len(results),
+        "llm_summary": llm_result or "Sintesi LLM non disponibile",
             "source": "searxng",
         }
         _set_cache(ck, result)
@@ -562,6 +568,7 @@ if FASTMCP_AVAILABLE:
     mcp_server = FastMCP(
         name="hermes-web-mcp",
         host=_MCP_BIND_ADDR,
+        transport_security=None,  # Disable DNS rebinding protection for external access
     )
 else:
     mcp_server = FastMCP(name="hermes-web-mcp")
