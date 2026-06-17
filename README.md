@@ -56,6 +56,20 @@ python hermes_mcp_server.py
 | `HERMES_MCP_CORS_ORIGINS` | `http://localhost:*,https://localhost:*` | Origini CORS consentite. Accetta array JSON (es. `'["*"]'`, `'["http://host1:port","http://host2:port"]'`) o lista comma-separated. Imposta a `[]` per same-origin-only. |
 | `HERMES_MCP_BIND_ADDR` | `127.0.0.1` | Bind IP per il server MCP HTTP (default localhost; impostare `0.0.0.0` solo su reti affidabili) |
 
+## Logica di Scelta dei Tools
+
+Il gateway (Hermes) seleziona il tool in base alla natura della query:
+
+| Query | Tool scelto | Comportamento |
+|-------|-------------|---------------|
+| Generica ("chi è X?", "come funziona Y?") | `web_search` | Primo tentativo. Query SearXNG/DDG → snippet risultati + eventuale sintesi LLM se troppo lunghi. Il più veloce (no fetch pagine). |
+| Complessa/tecnica/ambigua con risultati scarsi da `web_search` | `deep_search` | Approfondimento. Query SearXNG → apre le pagine dei top risultati (`read_webpage`) → analisi strutturata e sintesi con LLM locale. |
+| URL esplicito ("leggi https://...") | `read_webpage` | Lettura puntuale. Download pagina, estrazione testo (BeautifulSoup), pulizia HTML + riassunto/analisi LLM. Gestisce redirect (max 3 hop). |
+
+**Flusso tipico:** `web_search` → risultati insufficienti? → `deep_search` sui primi 1-2 URL rilevanti.
+
+La sintesi LLM è opzionale per tutti e tre: dipende da quanto è lungo il testo grezzo. Se supera la soglia configurata (`summary_max_tokens`), l'LLM locale produce un riassunto; altrimenti restituisce i dati così come sono.
+
 ## Note sulla Sicurezza
 
 La versione 2.x introduce protezioni di sicurezza multiple:
