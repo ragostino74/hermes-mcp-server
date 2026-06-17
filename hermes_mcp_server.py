@@ -7,10 +7,6 @@ MCP (Model Context Protocol) server che espone strumenti di ricerca web:
   - deep_search   : Ricerca profonda con analisi strutturata dell'LLM
   - read_webpage  : Lettura e sintesi LLM di pagine web (con SSRF guard)
 
-Note: lo strumento `get_current_datetime` è stato spostato nel server dedicato
-[hermes-mcp-timedata](https://github.com/ragostino74/hermes-mcp-timedata).
-
-
 Caratteristiche:
   - Doppio trasporto: stdio (Claude Desktop, VS Code) + HTTP/StreamableHTTP
   - Rate limiting configurabile (token bucket + semaphore)
